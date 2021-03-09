@@ -41,6 +41,9 @@ def get_threads_from_archive(url):
 
     for link in soup.find(id="arc-list").find_all("a"):
         thread = "https://boards.4chan.org" + str(link.get("href"))
+        # Remove the last part of the url that gets added when referring to the thread from the archive.
+        # We want a clean url so we can use it to create clean subdirectory names.
+        thread = thread.rpartition("/")[0]
         threads.append(thread)
 
     print("Found the following " + str(len(threads)) + " threads:")
@@ -50,7 +53,18 @@ def get_threads_from_archive(url):
     return threads
 
 
-def get_images_in_thread(url, small, exclude_strings):
+def make_directory(dir_name):
+    if not os.path.exists(dir_name):
+        try:
+            os.makedirs(dir_name)
+        except OSError as e:
+            if e.errno != errno.EEXIST:
+                raise
+
+
+# If the subdirectories argument is set, pass the base directory of the crawler to the base_dir parameter.
+# Otherwise, leave it empty.
+def get_images_in_thread(url, small, exclude_strings, base_dir=""):
     html_page = requests.get(url).text
     soup = BeautifulSoup(html_page, "lxml")
 
@@ -65,6 +79,12 @@ def get_images_in_thread(url, small, exclude_strings):
             return images
         if any(string in first_post for string in exclude_strings):
             return images
+
+    subdirectory = base_dir
+
+    if base_dir:
+        subdirectory = os.path.join(base_dir, url.split("/")[-1])
+        make_directory(subdirectory)
 
     if small:
         for image in soup.find_all("img"):
@@ -83,16 +103,11 @@ def get_images_in_thread(url, small, exclude_strings):
                 print("Found image " + src)
                 images.append(src)
 
-    return images
+    return images, subdirectory
 
 
 def download_images(images, dir_name):
-    if not os.path.exists(dir_name):
-        try:
-            os.makedirs(dir_name)
-        except OSError as e:
-                if e.errno != errno.EEXIST:
-                    raise
+    make_directory(dir_name)
 
     number_of_downloads = 0
     for image in images:
@@ -114,7 +129,7 @@ def download_images(images, dir_name):
 if __name__ == "__main__":
     start_time = time.time()
 
-    out_dir = os.getcwd()
+    dir = os.getcwd()
 
     parser = argparse.ArgumentParser(description="4chan image crawler - download all images from a board or a thread")
 
@@ -124,9 +139,10 @@ if __name__ == "__main__":
     group.add_argument("-a", "--archive", help="download images from all threads in the archive", action="store_true")
     group.add_argument("-t", "--thread", help="replace the board with a link to a specific thread", action="store_true")
 
-    parser.add_argument("-d", "--directory", help="save files to special directory", default=out_dir)
+    parser.add_argument("-d", "--directory", help="save files to special directory", default=dir)
     parser.add_argument("-s", "--small", help="download thumbnails instead of original images", action="store_true")
     parser.add_argument("-e", "--exclude", help="comma-separated list of terms to search for in the thread subject and first post. If found, the thread will be excluded from downloading")
+    parser.add_argument("-S", "--subdirectories", help="create a subdirectory for each thread", action="store_true")
 
     args = parser.parse_args()
 
@@ -154,14 +170,18 @@ if __name__ == "__main__":
             threads = get_threads_from_board(url)
 
     if args.directory:
-        out_dir = args.directory
+        dir = args.directory
 
     number_of_threads = len(threads)
     number_of_downloads = 0
 
     for thread in threads:
+        out_dir = dir
         print("Getting all links from thread " + thread)
-        images = get_images_in_thread(thread, args.small, exclude_strings)
+        if args.subdirectories:
+            images, out_dir = get_images_in_thread(thread, args.small, exclude_strings, out_dir)
+        else:
+            images, empty_dir = get_images_in_thread(thread, args.small, exclude_strings)
 
         if not images:
             print("Found excluding string in thread, skipping ...")
