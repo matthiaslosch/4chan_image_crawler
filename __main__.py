@@ -6,7 +6,7 @@ import requests
 import argparse
 from bs4 import BeautifulSoup
 
-exclude_strings = ["contest_banner", "archived", "closed", "sticky", "modicon", "adminicon"]
+exclude_url_parts = ["contest_banner", "archived", "closed", "sticky", "modicon", "adminicon"]
 media_formats = [".jpg", ".png", ".gif", ".webm"]
 
 def get_threads_from_board(url):
@@ -50,16 +50,26 @@ def get_threads_from_archive(url):
     return threads
 
 
-def get_images_in_thread(url, small):
+def get_images_in_thread(url, small, exclude_strings):
     html_page = requests.get(url).text
     soup = BeautifulSoup(html_page, "lxml")
 
     images = list()
 
+    # Filter thread
+    subject = soup.find("span", class_="subject").string
+    first_post = soup.find("blockquote", class_="postMessage").string
+
+    if exclude_strings:
+        if any(string in subject for string in exclude_strings):
+            return images
+        if any(string in first_post for string in exclude_strings):
+            return images
+
     if small:
         for image in soup.find_all("img"):
             src = "https:" + image.get("src")
-            if any(string in src for string in exclude_strings):
+            if any(string in src for string in exclude_url_parts):
                 continue
             if any(format in src for format in media_formats):
                 print("Found image " + src)
@@ -67,7 +77,7 @@ def get_images_in_thread(url, small):
     else:
         for image in soup.find_all("a", class_="fileThumb"):
             src = "https:" + image.get("href")
-            if any(string in src for string in exclude_strings):
+            if any(string in src for string in exclude_url_parts):
                 continue
             if any(format in src for format in media_formats):
                 print("Found image " + src)
@@ -116,8 +126,15 @@ if __name__ == "__main__":
 
     parser.add_argument("-d", "--directory", help="save files to special directory", default=out_dir)
     parser.add_argument("-s", "--small", help="download thumbnails instead of original images", action="store_true")
+    parser.add_argument("-e", "--exclude", help="comma-separated list of terms to search for in the thread subject and first post. If found, the thread will be excluded from downloading")
 
     args = parser.parse_args()
+
+    exclude_strings = args.exclude
+
+    if exclude_strings:
+        if exclude_strings.find(",") != -1:
+            exclude_strings = args.exclude.split(',')
 
     url = "https://boards.4chan.org/" + args.board + "/"
     if args.archive:
@@ -144,7 +161,11 @@ if __name__ == "__main__":
 
     for thread in threads:
         print("Getting all links from thread " + thread)
-        images = get_images_in_thread(thread, args.small)
+        images = get_images_in_thread(thread, args.small, exclude_strings)
+
+        if not images:
+            print("Found excluding string in thread, skipping ...")
+            continue
 
         print("Downloading all images from thread " + thread)
         number_of_downloads = number_of_downloads + download_images(images, out_dir)
